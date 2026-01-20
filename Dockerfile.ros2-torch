@@ -1,0 +1,77 @@
+# syntax=docker/dockerfile:1
+
+ARG TARGETARCH
+
+FROM --platform=linux/amd64 nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04 AS cuda-amd64
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-cuda:12.2.2-devel-arm64-ubuntu22.04 AS cuda-arm64
+
+FROM cuda-${TARGETARCH} AS ros2-humble-cuda
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Taipei
+SHELL ["/bin/bash", "-c"]
+
+# ---------- basic tools ----------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl gnupg2 lsb-release ca-certificates \
+    build-essential cmake git \
+    python3 python3-pip python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------- ROS 2 Humble apt repo ----------
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+    | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+    http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+    > /etc/apt/sources.list.d/ros2.list
+
+# ---------- ROS 2 install ----------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-desktop-full \
+    python3-colcon-common-extensions \
+    python3-rosdep \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rosdep init || true && rosdep update
+
+ENV ROS_DISTRO=humble
+
+FROM --platform=linux/arm64 ros2-humble-cuda AS ros2-humble-torch-arm64
+
+# ---------- PyTorch (CUDA) ----------
+WORKDIR /opt
+
+RUN git clone --depth=1 --recursive -b v2.7.0 https://github.com/pytorch/pytorch
+
+WORKDIR /opt/pytorch
+
+RUN python3 -m pip install -U pip setuptools wheel 
+RUN python3 -m pip install -r requirements.txt --ignore-installed sympy
+RUN python3 -m pip install scikit-build ninja "cmake<4" "numpy>2"
+RUN PYTORCH_BUILD_VERSION=2.7.0 PYTORCH_BUILD_NUMBER=1 USE_CUDA=1 CUDA_HOME=/usr/local/cuda TORCH_CUDA_ARCH_LIST=8.7 \
+    USE_CUDNN=1 USE_CUSPARSELT=1 USE_CUDSS=1 USE_CUFILE=1 \
+    USE_NATIVE_ARCH=1 USE_DISTRIBUTED=1 USE_FLASH_ATTENTION=1 USE_MEM_EFF_ATTENTION=1 \
+    USE_TENSORRT=0 \
+    python3 setup.py bdist_wheel
+
+RUN python3 -m pip install /opt/pytorch/dist/torch-2.7.0-cp310-cp310-linux_aarch64.whl
+
+# ---------- TorchVision ----------
+WORKDIR /opt
+RUN apt-get update && apt-get install libjpeg-dev zlib1g-dev libpython3-dev libopenblas-dev libavcodec-dev libavformat-dev libswscale-dev -y --no-install-recommends
+RUN git clone --recursive --depth=1 -b v0.22.0 https://github.com/pytorch/vision.git
+WORKDIR /opt/vision
+RUN BUILD_VERSION=0.22.0 FORCE_CUDA=1 CUDA_HOME=/usr/local/cuda TORCH_CUDA_ARCH_LIST=8.7 python3 setup.py bdist_wheel
+
+RUN python3 -m pip install /opt/vision/dist/torchvision-0.22.0-cp310-cp310-linux_aarch64.whl
+
+FROM --platform=linux/amd64 ros2-humble-cuda AS ros2-humble-torch-amd64
+
+# ---------- PyTorch (CUDA) ----------
+RUN python3 -m pip install --ignore-installed sympy \
+ && python3 -m pip install  \
+    "numpy>2" torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu128
+
+FROM ros2-humble-torch-${TARGETARCH} AS ros2-humble-robotics
+
+WORKDIR /
