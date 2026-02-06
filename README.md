@@ -18,3 +18,6 @@ inside the container.
 - OS / BSP: JetPack (L4T R36.4.7)
 - CUDA: 12.6
 - NumPy: >= 2.0
+
+### Prebuild docker image
+dididog/ros2-torch
