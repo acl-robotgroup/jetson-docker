@@ -5,7 +5,7 @@ ARG TARGETARCH
 FROM --platform=linux/amd64 nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04 AS cuda-amd64
 FROM --platform=linux/arm64 nvcr.io/nvidia/12.6.11-devel:12.6.11-devel-aarch64-ubuntu22.04 AS cuda-arm64
 
-FROM cuda-${TARGETARCH} AS ros2-humble-cuda
+FROM cuda-${TARGETARCH} AS cuda
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Taipei
@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev python3-pip python3-venv gcc \
     && rm -rf /var/lib/apt/lists/*
 
-FROM --platform=linux/arm64 ros2-humble-cuda AS ros2-humble-torch-arm64
+FROM --platform=linux/arm64 cuda AS cuda-torch-arm64
 
 # ---------- PyTorch (CUDA) ----------
 WORKDIR /opt
@@ -47,14 +47,14 @@ RUN BUILD_VERSION=0.22.0 FORCE_CUDA=1 CUDA_HOME=/usr/local/cuda TORCH_CUDA_ARCH_
 
 RUN python3 -m pip install /opt/vision/dist/torchvision-0.22.0-cp310-cp310-linux_aarch64.whl
 
-FROM --platform=linux/amd64 ros2-humble-cuda AS ros2-humble-torch-amd64
+FROM --platform=linux/amd64 cuda AS cuda-torch-amd64
 
 # ---------- PyTorch (CUDA) ----------
 RUN python3 -m pip install --ignore-installed sympy \
  && python3 -m pip install  \
     "numpy>2" torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu128
 
-FROM ros2-humble-torch-${TARGETARCH} AS ros2-humble-robotics
+FROM cuda-torch-${TARGETARCH} AS ros2-humble-cuda-torch
 
 # ---------- ROS 2 Humble apt repo ----------
 RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
